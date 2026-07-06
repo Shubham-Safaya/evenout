@@ -187,7 +187,9 @@ async function renderGroup(gid) {
         <div class="exp-meta">${esc(nameOf[e.paid_by] || "?")} paid ${fmt(e.amount, g.currency)}
           · ${expDate(e)}</div>
       </div>
-      <button class="del-btn" data-id="${e.id}" title="delete">×</button>
+      <span class="row-btns">${e.is_settlement ? "" :
+        `<button class="edit-btn" data-id="${e.id}" title="edit">✎</button>`}
+      <button class="del-btn" data-id="${e.id}" title="delete">×</button></span>
     </div>`).join("")
     : `<p class="hint">No expenses yet — add the first one.</p>`;
 
@@ -204,8 +206,8 @@ async function renderGroup(gid) {
       <button class="btn small" id="copy-link">copy invite link</button>
     </section>
 
-    <section class="panel">
-      <h2>Add expense</h2>
+    <section class="panel" id="expense-panel">
+      <h2 id="expense-form-title">Add expense</h2>
       <form id="form-expense">
         <label>Description <input name="description" required maxlength="200" placeholder="Dinner, cab, groceries…"></label>
         <div class="row2">
@@ -217,7 +219,8 @@ async function renderGroup(gid) {
           <legend>Split <select id="split-mode"><option value="equal">equally</option><option value="exact">by exact amounts</option></select></legend>
           <div id="split-list">${splitInputs}</div>
         </fieldset>
-        <button type="submit" class="btn">Add expense</button>
+        <button type="submit" class="btn" id="expense-submit">Add expense</button>
+        <button type="button" class="btn small hidden" id="expense-cancel">cancel edit</button>
       </form>
     </section>
 
@@ -277,15 +280,58 @@ async function renderGroup(gid) {
     }
     setBusy(f, true);
     try {
-      await rpc("add_expense", {
-        p_group: gid, p_description: f.description.value.trim(),
-        p_amount: amount, p_paid_by: f.paid_by.value,
-        p_splits: splits, p_is_settlement: false,
-        p_spent_on: f.spent_on.value || today(),
-      });
+      if (f.dataset.editing) {
+        await rpc("update_expense", {
+          p_group: gid, p_expense: f.dataset.editing,
+          p_description: f.description.value.trim(),
+          p_amount: amount, p_paid_by: f.paid_by.value,
+          p_splits: splits, p_spent_on: f.spent_on.value || today(),
+        });
+      } else {
+        await rpc("add_expense", {
+          p_group: gid, p_description: f.description.value.trim(),
+          p_amount: amount, p_paid_by: f.paid_by.value,
+          p_splits: splits, p_is_settlement: false,
+          p_spent_on: f.spent_on.value || today(),
+        });
+      }
       renderGroup(gid);
-    } catch (e) { alert("Could not add expense: " + e.message); setBusy(f, false); }
+    } catch (e) {
+      const msg = f.dataset.editing && /update_expense/.test(e.message)
+        ? "Editing needs migration 005 — ask Shubham to run it."
+        : e.message;
+      alert("Could not save expense: " + msg); setBusy(f, false);
+    }
   });
+
+  // Edit: prefill the form with the expense and switch to save mode
+  app.querySelectorAll(".edit-btn").forEach(btn => btn.onclick = () => {
+    const e = data.expenses.find(x => x.id === btn.dataset.id);
+    if (!e) return;
+    const f = $("#form-expense");
+    f.dataset.editing = e.id;
+    f.description.value = e.description;
+    f.amount.value = Number(e.amount).toFixed(2);
+    f.paid_by.value = e.paid_by;
+    f.spent_on.value = e.spent_on || today();
+    // exact mode with current shares — add/drop people by editing amounts,
+    // or switch to "equally" and use the checkboxes
+    $("#split-mode").value = "exact";
+    $("#split-mode").dispatchEvent(new Event("change"));
+    const shareOf = Object.fromEntries((e.splits || []).map(s => [s.member_id, s.share]));
+    app.querySelectorAll(".split-amt").forEach(i => {
+      i.value = shareOf[i.dataset.id] ? Number(shareOf[i.dataset.id]).toFixed(2) : "";
+    });
+    app.querySelectorAll(".split-in").forEach(i => {
+      i.checked = !!shareOf[i.dataset.id];
+    });
+    $("#expense-form-title").textContent = `Edit: ${e.description}`;
+    $("#expense-submit").textContent = "Save changes";
+    $("#expense-cancel").classList.remove("hidden");
+    $("#expense-panel").scrollIntoView({ behavior: "smooth" });
+  });
+
+  $("#expense-cancel").onclick = () => renderGroup(gid);
 
   app.querySelectorAll(".settle-btn").forEach(btn => btn.onclick = async () => {
     const { from, to, amt } = btn.dataset;

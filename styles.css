@@ -90,3 +90,9 @@ a.btn { text-decoration: none; display: inline-block; }
   .row2 { grid-template-columns: 1fr; }
   .split-line { grid-template-columns: 1fr auto 90px; }
 }
+
+/* edit flow */
+.row-btns { display: flex; gap: 0.15rem; align-items: center; }
+.edit-btn { background: none; border: 0; color: #c4d6d2; font-size: 0.95rem; cursor: pointer; line-height: 1; }
+.edit-btn:hover { color: var(--marigold); }
+#expense-cancel { background: #6b8a85; margin-left: 0.5rem; }
