@@ -205,3 +205,16 @@ a.btn { text-decoration: none; display: inline-block; }
   * { transition: none !important; }
   html { scroll-behavior: auto; }
 }
+
+/* v3.3: charts + categories */
+.charts summary { list-style: none; cursor: pointer; display: flex; align-items: center; gap: 0.5rem; }
+.charts summary::before { content: "▸"; color: var(--marigold); transition: transform 0.15s; }
+.charts[open] summary::before { transform: rotate(90deg); }
+.charts summary h2 { margin: 0; display: inline; }
+.chart-h { margin: 1rem 0 0.45rem !important; color: #33504c; }
+.chart-row { display: grid; grid-template-columns: minmax(90px, 130px) 1fr auto; align-items: center; gap: 0.6rem; padding: 0.22rem 0; font-size: 0.84rem; }
+.chart-lbl { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chart-track { height: 12px; background: #edf2f0; border-radius: 6px; overflow: hidden; }
+.chart-fill { display: block; height: 100%; border-radius: 6px; transition: width 0.4s ease; }
+.chart-amt { font-weight: 600; font-size: 0.8rem; white-space: nowrap; }
+.split-line .split-pct { margin: 0; }

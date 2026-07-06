@@ -46,8 +46,8 @@ random device tokens only; Do Not Track honored. One-paste setup:
 - Recent groups remembered per device
 
 ## Roadmap (beta → app)
-- [ ] Percent / share-based splits
 - [ ] Supabase Realtime (balances update without refresh)
+- [x] Percent splits, categories, charts (v3.3)
 - [ ] Export group history to CSV
 - [x] PWA manifest + offline shell → installable "app" without app-store fees (v0.2)
 - [ ] Native wrapper (Capacitor) if it ever earns a Play Store listing ($25 one-time)

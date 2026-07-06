@@ -2,7 +2,7 @@
    Shell files: cache-first with background refresh (stale-while-revalidate).
    Data (Supabase RPCs) is POST — never intercepted, always live. */
 
-const CACHE = "evenout-v3.2";
+const CACHE = "evenout-v3.3";
 const SHELL = [
   "./",
   "index.html",

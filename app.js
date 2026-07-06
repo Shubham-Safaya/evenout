@@ -37,10 +37,10 @@ let session = null; // Supabase auth session (optional — link-only use is fine
 async function rpc(fn, args) {
   const { data, error } = await db.rpc(fn, args);
   if (error) {
-    // graceful pre-migration fallback: old add_expense has no p_spent_on
-    if (fn === "add_expense" && args.p_spent_on && /add_expense/.test(error.message)
+    // graceful pre-migration fallback: older RPCs lack p_category
+    if (args && args.p_category && new RegExp(fn).test(error.message)
         && /function|parameter|argument/i.test(error.message)) {
-      const { p_spent_on, ...rest } = args;
+      const { p_category, ...rest } = args;
       const retry = await db.rpc(fn, rest);
       if (!retry.error) return retry.data;
     }
@@ -119,6 +119,58 @@ function avatar(name, size) {
   for (const c of String(name)) h = (h * 31 + c.charCodeAt(0)) % 360;
   const initials = String(name).trim().split(/\s+/).map(w => w[0]).slice(0, 2).join("").toUpperCase();
   return `<span class="avatar ${size || ""}" style="background:hsl(${h},48%,38%)">${esc(initials)}</span>`;
+}
+
+const CATEGORIES = {
+  general: "🧾", food: "🍽️", groceries: "🛒", travel: "🚕", stay: "🏨",
+  utilities: "💡", entertainment: "🎬", shopping: "🛍️", health: "💊",
+};
+
+function catIcon(c) { return CATEGORIES[c] || CATEGORIES.general; }
+
+function barChart(rows, cur) {
+  // rows: [{label, amount, color, icon?}] sorted desc — one bar block
+  if (!rows.length) return `<p class="hint">Nothing here yet.</p>`;
+  const max = Math.max(...rows.map(r => r.amount));
+  return rows.map(r => `
+    <div class="chart-row">
+      <span class="chart-lbl">${r.icon || ""} ${esc(r.label)}</span>
+      <span class="chart-track"><span class="chart-fill" style="width:${Math.max(2, Math.round((r.amount / max) * 100))}%;background:${r.color}"></span></span>
+      <span class="chart-amt">${fmt(r.amount, cur)}</span>
+    </div>`).join("");
+}
+
+function hueOf(name) {
+  let h = 0;
+  for (const c of String(name)) h = (h * 31 + c.charCodeAt(0)) % 360;
+  return h;
+}
+
+function buildCharts(data, g) {
+  const real = data.expenses.filter(e => !e.is_settlement);
+  if (!real.length) return "";
+  const byCat = {}, byWho = {}, byMonth = {};
+  for (const e of real) {
+    const amt = Number(e.amount);
+    const cat = e.category || "general";
+    byCat[cat] = (byCat[cat] || 0) + amt;
+    byWho[e.paid_by] = (byWho[e.paid_by] || 0) + amt;
+    const mo = (e.spent_on || e.created_at).slice(0, 7);
+    byMonth[mo] = (byMonth[mo] || 0) + amt;
+  }
+  const nameOf = Object.fromEntries(data.members.map(m => [m.id, m.name]));
+  const catRows = Object.entries(byCat).sort((a, b) => b[1] - a[1])
+    .map(([c, v], i) => ({ label: c, icon: catIcon(c), amount: v, color: `hsl(${(i * 47 + 28) % 360},52%,42%)` }));
+  const whoRows = Object.entries(byWho).sort((a, b) => b[1] - a[1])
+    .map(([id, v]) => ({ label: nameOf[id] || "?", amount: v, color: `hsl(${hueOf(nameOf[id] || "?")},48%,38%)` }));
+  const moRows = Object.entries(byMonth).sort()
+    .map(([mo, v]) => ({ label: new Date(mo + "-15").toLocaleDateString(undefined, { month: "short", year: "2-digit" }), amount: v, color: "var(--marigold)" }));
+  return `
+    <details class="panel charts"><summary><h2>Charts</h2></summary>
+      <h3 class="chart-h">By category</h3>${barChart(catRows, g.currency)}
+      <h3 class="chart-h">Who paid</h3>${barChart(whoRows, g.currency)}
+      <h3 class="chart-h">By month</h3>${barChart(moRows, g.currency)}
+    </details>`;
 }
 
 /* ── Views ────────────────────────────────────────────────────────── */
@@ -229,7 +281,7 @@ async function renderGroup(gid) {
       ${avatar(nameOf[e.paid_by] || "?")}
       <div class="exp-main">
         <strong>${esc(e.description)}</strong>
-        <div class="exp-meta">${esc(nameOf[e.paid_by] || "?")} paid · ${expDate(e)}</div>
+        <div class="exp-meta">${e.is_settlement ? "" : catIcon(e.category) + " "}${esc(nameOf[e.paid_by] || "?")} paid · ${expDate(e)}</div>
       </div>
       <span class="exp-amt">${fmt(e.amount, g.currency)}</span>
       <span class="row-btns">${e.is_settlement ? "" :
@@ -243,6 +295,7 @@ async function renderGroup(gid) {
     <label class="split-line"><span>${esc(m.name)}</span>
       <input type="checkbox" class="split-in" data-id="${m.id}" checked>
       <input type="number" step="0.01" min="0" class="split-amt hidden" data-id="${m.id}" placeholder="0.00">
+      <input type="number" step="0.1" min="0" max="100" class="split-pct hidden" data-id="${m.id}" placeholder="%">
     </label>`).join("");
 
   app.innerHTML = `
@@ -259,9 +312,13 @@ async function renderGroup(gid) {
           <label>Amount <input name="amount" type="number" step="0.01" min="0.01" required></label>
           <label>Paid by <select name="paid_by">${memberOpts}</select></label>
         </div>
-        <label>Date <input name="spent_on" type="date" value="${today()}" max="${today()}" required></label>
+        <div class="row2">
+          <label>Date <input name="spent_on" type="date" value="${today()}" max="${today()}" required></label>
+          <label>Category <select name="category">${Object.keys(CATEGORIES).map(c =>
+            `<option value="${c}">${catIcon(c)} ${c}</option>`).join("")}</select></label>
+        </div>
         <fieldset>
-          <legend>Split <select id="split-mode"><option value="equal">equally</option><option value="exact">by exact amounts</option></select></legend>
+          <legend>Split <select id="split-mode"><option value="equal">equally</option><option value="exact">by exact amounts</option><option value="percent">by percentages</option></select></legend>
           <div id="split-list">${splitInputs}</div>
         </fieldset>
         <button type="submit" class="btn" id="expense-submit">Add expense</button>
@@ -288,6 +345,8 @@ async function renderGroup(gid) {
       ${planRows}
     </section>
 
+    ${buildCharts(data, g)}
+
     <section class="panel">
       <h2>History</h2>
       ${expRows}
@@ -310,18 +369,19 @@ async function renderGroup(gid) {
   };
 
   $("#split-mode").onchange = ev => {
-    const exact = ev.target.value === "exact";
-    app.querySelectorAll(".split-amt").forEach(i => i.classList.toggle("hidden", !exact));
-    app.querySelectorAll(".split-in").forEach(i => i.classList.toggle("hidden", exact));
+    const mode = ev.target.value;
+    app.querySelectorAll(".split-amt").forEach(i => i.classList.toggle("hidden", mode !== "exact"));
+    app.querySelectorAll(".split-pct").forEach(i => i.classList.toggle("hidden", mode !== "percent"));
+    app.querySelectorAll(".split-in").forEach(i => i.classList.toggle("hidden", mode !== "equal"));
   };
 
   $("#form-expense").addEventListener("submit", async ev => {
     ev.preventDefault();
     const f = ev.target;
     const amount = Math.round(parseFloat(f.amount.value) * 100) / 100;
-    const exact = $("#split-mode").value === "exact";
+    const mode = $("#split-mode").value;
     let splits = [];
-    if (exact) {
+    if (mode === "exact") {
       app.querySelectorAll(".split-amt").forEach(i => {
         const v = Math.round((parseFloat(i.value) || 0) * 100) / 100;
         if (v > 0) splits.push({ member_id: i.dataset.id, share: v });
@@ -329,6 +389,23 @@ async function renderGroup(gid) {
       const total = splits.reduce((s, x) => s + x.share, 0);
       if (Math.abs(total - amount) > 0.02)
         return alert(`Split amounts (${total.toFixed(2)}) must add up to ${amount.toFixed(2)}.`);
+    } else if (mode === "percent") {
+      const pcts = [];
+      app.querySelectorAll(".split-pct").forEach(i => {
+        const v = parseFloat(i.value) || 0;
+        if (v > 0) pcts.push({ member_id: i.dataset.id, pct: v });
+      });
+      const totalPct = pcts.reduce((s, x) => s + x.pct, 0);
+      if (Math.abs(totalPct - 100) > 0.1)
+        return alert(`Percentages add up to ${totalPct.toFixed(1)}% — they must total 100%.`);
+      // cent-exact: round each share down to cents, give leftover cents to
+      // the largest shares first
+      const cents = Math.round(amount * 100);
+      let alloc = pcts.map(x => ({ member_id: x.member_id, c: Math.floor(cents * x.pct / 100), frac: (cents * x.pct / 100) % 1 }));
+      let leftover = cents - alloc.reduce((s, a) => s + a.c, 0);
+      alloc.sort((a, b) => b.frac - a.frac);
+      for (let k = 0; k < leftover; k++) alloc[k % alloc.length].c += 1;
+      splits = alloc.map(a => ({ member_id: a.member_id, share: a.c / 100 }));
     } else {
       const chosen = [...app.querySelectorAll(".split-in:checked")].map(i => i.dataset.id);
       if (!chosen.length) return alert("Pick at least one person to split with.");
@@ -348,6 +425,7 @@ async function renderGroup(gid) {
           p_description: f.description.value.trim(),
           p_amount: amount, p_paid_by: f.paid_by.value,
           p_splits: splits, p_spent_on: f.spent_on.value || today(),
+          p_category: f.category.value,
         });
       } else {
         await rpc("add_expense", {
@@ -355,6 +433,7 @@ async function renderGroup(gid) {
           p_amount: amount, p_paid_by: f.paid_by.value,
           p_splits: splits, p_is_settlement: false,
           p_spent_on: f.spent_on.value || today(),
+          p_category: f.category.value,
         });
       }
       renderGroup(gid);
@@ -376,6 +455,7 @@ async function renderGroup(gid) {
     f.amount.value = Number(e.amount).toFixed(2);
     f.paid_by.value = e.paid_by;
     f.spent_on.value = e.spent_on || today();
+    f.category.value = CATEGORIES[e.category] ? e.category : "general";
     // exact mode with current shares — add/drop people by editing amounts,
     // or switch to "equally" and use the checkboxes
     $("#split-mode").value = "exact";
