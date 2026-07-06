@@ -34,5 +34,5 @@ balances, and settle up with the fewest payments.
 - [ ] Percent / share-based splits
 - [ ] Supabase Realtime (balances update without refresh)
 - [ ] Export group history to CSV
-- [ ] PWA manifest + offline shell → installable "app" without app-store fees
+- [x] PWA manifest + offline shell → installable "app" without app-store fees (v0.2)
 - [ ] Native wrapper (Capacitor) if it ever earns a Play Store listing ($25 one-time)

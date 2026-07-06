@@ -293,3 +293,24 @@ function route() {
 
 window.addEventListener("hashchange", route);
 route();
+
+/* ── PWA: offline shell + install button ─────────────────────────── */
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.register("sw.js").catch(() => {});
+}
+
+let installPrompt = null;
+const installBtn = $("#install-btn");
+window.addEventListener("beforeinstallprompt", (ev) => {
+  ev.preventDefault();
+  installPrompt = ev;
+  installBtn.classList.remove("hidden");
+});
+installBtn.addEventListener("click", async () => {
+  if (!installPrompt) return;
+  installPrompt.prompt();
+  await installPrompt.userChoice;
+  installPrompt = null;
+  installBtn.classList.add("hidden");
+});
+window.addEventListener("appinstalled", () => installBtn.classList.add("hidden"));
