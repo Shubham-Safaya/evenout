@@ -16,6 +16,7 @@
     <a class="brand" href="./">Hisaab</a>
     <span class="tag">split expenses with friends — free, no ads</span>
     <button id="install-btn" class="btn small hidden">Install app</button>
+    <span id="auth-area" class="auth-area"></span>
   </header>
 
   <div id="setup-banner" class="banner hidden">
@@ -55,7 +56,17 @@
       <p class="hint">Your group gets a private link. Anyone with the link is in —
       treat it like a group chat invite.</p>
     </section>
+    <section class="panel" id="account-groups"></section>
     <section class="panel" id="recent-groups"></section>
+    <section class="panel privacy">
+      <h2>Your data stays yours</h2>
+      <p>No ads, no trackers, no analytics, no selling data — ever. Expenses
+      live in a locked-down database that even our own public API key cannot
+      browse; only people with your group's link can see your group. Sign-in
+      is optional and only remembers which groups are yours. The whole thing
+      is <a href="https://github.com/Shubham-Safaya/hisaab">open source</a>,
+      so you can check.</p>
+    </section>
   </template>
 
   <footer class="foot">

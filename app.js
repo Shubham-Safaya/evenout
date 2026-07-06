@@ -21,9 +21,31 @@ function esc(s) {
   return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 
+function today() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+function expDate(e) {
+  // spent_on (v3+) is a plain date; older rows fall back to created_at
+  const d = e.spent_on ? new Date(e.spent_on + "T12:00:00") : new Date(e.created_at);
+  return d.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+}
+
+let session = null; // Supabase auth session (optional — link-only use is fine)
+
 async function rpc(fn, args) {
   const { data, error } = await db.rpc(fn, args);
-  if (error) throw new Error(error.message);
+  if (error) {
+    // graceful pre-migration fallback: old add_expense has no p_spent_on
+    if (fn === "add_expense" && args.p_spent_on && /add_expense/.test(error.message)
+        && /function|parameter|argument/i.test(error.message)) {
+      const { p_spent_on, ...rest } = args;
+      const retry = await db.rpc(fn, rest);
+      if (!retry.error) return retry.data;
+    }
+    throw new Error(error.message);
+  }
   return data;
 }
 
@@ -82,6 +104,20 @@ function renderHome() {
     recent.remove();
   }
 
+  // Signed in? Show groups pinned to the account (any device).
+  const acct = $("#account-groups");
+  if (session) {
+    db.from("user_groups").select("group_id, group_name").order("added_at", { ascending: false })
+      .then(({ data }) => {
+        if (data && data.length) {
+          acct.innerHTML = "<h2>Your groups (account)</h2>" + data.map(g =>
+            `<a class="group-link" href="#/g/${esc(g.group_id)}">${esc(g.group_name || "Unnamed group")}</a>`).join("");
+        } else acct.remove();
+      });
+  } else {
+    acct.remove();
+  }
+
   $("#form-create").addEventListener("submit", async ev => {
     ev.preventDefault();
     const f = ev.target;
@@ -118,6 +154,13 @@ async function renderGroup(gid) {
 
   const g = data.group;
   rememberGroup(g.id, g.name);
+  if (session) {
+    // pin to account (idempotent) so it shows on any device he signs into
+    db.from("user_groups").upsert(
+      { user_id: session.user.id, group_id: g.id, group_name: g.name },
+      { onConflict: "user_id,group_id" }
+    ).then(() => {});
+  }
   const nameOf = Object.fromEntries(data.members.map(m => [m.id, m.name]));
   const balances = computeBalances(data);
   const plan = simplifyDebts(balances);
@@ -126,7 +169,7 @@ async function renderGroup(gid) {
     const b = balances[m.id];
     const cls = b > 0.005 ? "pos" : b < -0.005 ? "neg" : "";
     const label = b > 0.005 ? "gets back" : b < -0.005 ? "owes" : "settled up";
-    return `<div class="bal-row"><span>${esc(m.name)}</span>
+    return `<div class="bal-row"><a class="member-link" href="#/g/${g.id}/m/${m.id}">${esc(m.name)}</a>
       <span class="${cls}">${label}${cls ? " " + fmt(Math.abs(b), g.currency) : ""}</span></div>`;
   }).join("");
 
@@ -142,7 +185,7 @@ async function renderGroup(gid) {
       <div>
         <strong>${esc(e.description)}</strong>
         <div class="exp-meta">${esc(nameOf[e.paid_by] || "?")} paid ${fmt(e.amount, g.currency)}
-          · ${new Date(e.created_at).toLocaleDateString()}</div>
+          · ${expDate(e)}</div>
       </div>
       <button class="del-btn" data-id="${e.id}" title="delete">×</button>
     </div>`).join("")
@@ -169,6 +212,7 @@ async function renderGroup(gid) {
           <label>Amount <input name="amount" type="number" step="0.01" min="0.01" required></label>
           <label>Paid by <select name="paid_by">${memberOpts}</select></label>
         </div>
+        <label>Date <input name="spent_on" type="date" value="${today()}" max="${today()}" required></label>
         <fieldset>
           <legend>Split <select id="split-mode"><option value="equal">equally</option><option value="exact">by exact amounts</option></select></legend>
           <div id="split-list">${splitInputs}</div>
@@ -237,6 +281,7 @@ async function renderGroup(gid) {
         p_group: gid, p_description: f.description.value.trim(),
         p_amount: amount, p_paid_by: f.paid_by.value,
         p_splits: splits, p_is_settlement: false,
+        p_spent_on: f.spent_on.value || today(),
       });
       renderGroup(gid);
     } catch (e) { alert("Could not add expense: " + e.message); setBusy(f, false); }
@@ -278,6 +323,133 @@ function setBusy(form, busy) {
   form.querySelectorAll("button, input, select").forEach(el => (el.disabled = busy));
 }
 
+/* ── Member view: one person's ledger + quick pair expense ────────── */
+async function renderMember(gid, mid) {
+  app.innerHTML = `<p class="loading">Loading…</p>`;
+  let data;
+  try { data = await rpc("get_group_data", { p_group: gid }); }
+  catch (e) { app.innerHTML = `<section class="panel"><p>${esc(e.message)}</p></section>`; return; }
+  if (!data || !data.group) { location.hash = `#/g/${gid}`; return; }
+
+  const g = data.group;
+  const me = data.members.find(m => m.id === mid);
+  if (!me) { location.hash = `#/g/${gid}`; return; }
+  const nameOf = Object.fromEntries(data.members.map(m => [m.id, m.name]));
+  const others = data.members.filter(m => m.id !== mid);
+  const bal = computeBalances(data)[mid] || 0;
+  const balLabel = bal > 0.005 ? `gets back ${fmt(bal, g.currency)}`
+    : bal < -0.005 ? `owes ${fmt(-bal, g.currency)}` : "settled up";
+
+  const involved = data.expenses.filter(e =>
+    e.paid_by === mid || (e.splits || []).some(s => s.member_id === mid));
+  const rows = involved.length ? involved.map(e => {
+    const mine = e.paid_by === mid
+      ? `paid ${fmt(e.amount, g.currency)}`
+      : `owes ${fmt((e.splits || []).find(s => s.member_id === mid)?.share || 0, g.currency)}`;
+    return `<div class="exp-row ${e.is_settlement ? "settlement" : ""}"><div>
+      <strong>${esc(e.description)}</strong>
+      <div class="exp-meta">${esc(me.name)} ${mine} · ${expDate(e)}</div></div></div>`;
+  }).join("") : `<p class="hint">Nothing involving ${esc(me.name)} yet.</p>`;
+
+  const otherOpts = others.map(m => `<option value="${m.id}">${esc(m.name)}</option>`).join("");
+
+  app.innerHTML = `
+    <section class="group-head">
+      <h1>${esc(me.name)} <span class="in-group">in ${esc(g.name)}</span></h1>
+      <a class="btn small" href="#/g/${g.id}">← group</a>
+    </section>
+    <section class="panel"><h2>Balance</h2>
+      <div class="bal-row"><span>${esc(me.name)}</span><span class="${bal > 0.005 ? "pos" : bal < -0.005 ? "neg" : ""}">${balLabel}</span></div>
+    </section>
+    ${others.length ? `
+    <section class="panel">
+      <h2>Add expense with ${esc(me.name)}</h2>
+      <form id="form-pair">
+        <label>Description <input name="description" required maxlength="200" placeholder="Cab, coffee, tickets…"></label>
+        <div class="row2">
+          <label>Amount <input name="amount" type="number" step="0.01" min="0.01" required></label>
+          <label>Date <input name="spent_on" type="date" value="${today()}" max="${today()}" required></label>
+        </div>
+        <div class="row2">
+          <label>With <select name="other">${otherOpts}</select></label>
+          <label>Who paid?
+            <select name="payer_side">
+              <option value="me">${esc(me.name)} paid</option>
+              <option value="other">the other person paid</option>
+            </select>
+          </label>
+        </div>
+        <label>How to split
+          <select name="mode">
+            <option value="equal">split equally between the two</option>
+            <option value="full">the non-payer owes the full amount</option>
+          </select>
+        </label>
+        <button type="submit" class="btn">Add</button>
+      </form>
+    </section>` : ""}
+    <section class="panel"><h2>${esc(me.name)}'s activity</h2>${rows}</section>`;
+
+  const pairForm = $("#form-pair");
+  if (pairForm) pairForm.addEventListener("submit", async ev => {
+    ev.preventDefault();
+    const f = ev.target;
+    const amount = Math.round(parseFloat(f.amount.value) * 100) / 100;
+    const other = f.other.value;
+    const payer = f.payer_side.value === "me" ? mid : other;
+    const ower = payer === mid ? other : mid;
+    const splits = f.mode.value === "full"
+      ? [{ member_id: ower, share: amount }]
+      : [{ member_id: payer, share: Math.round(amount * 50) / 100 },
+         { member_id: ower, share: amount - Math.round(amount * 50) / 100 }];
+    setBusy(f, true);
+    try {
+      await rpc("add_expense", {
+        p_group: gid, p_description: f.description.value.trim(),
+        p_amount: amount, p_paid_by: payer, p_splits: splits,
+        p_is_settlement: false, p_spent_on: f.spent_on.value || today(),
+      });
+      renderMember(gid, mid);
+    } catch (e) { alert("Could not add: " + e.message); setBusy(f, false); }
+  });
+}
+
+/* ── Optional sign-in (email magic link) ──────────────────────────── */
+function renderAuthArea() {
+  const el = $("#auth-area");
+  if (!el || !CONFIGURED) return;
+  if (session) {
+    el.innerHTML = `<span class="auth-mail">${esc(session.user.email || "")}</span>
+      <button class="linkish" id="signout-btn">sign out</button>`;
+    $("#signout-btn").onclick = async () => { await db.auth.signOut(); };
+  } else {
+    el.innerHTML = `<button class="linkish" id="signin-btn">sign in</button>`;
+    $("#signin-btn").onclick = async () => {
+      const email = prompt(
+        "Optional sign-in: your groups get remembered on any device.\n" +
+        "Enter your email — we send a one-time login link. No password, " +
+        "no spam, used for nothing else.");
+      if (!email || !email.includes("@")) return;
+      const { error } = await db.auth.signInWithOtp({
+        email: email.trim(),
+        options: { emailRedirectTo: location.origin + location.pathname },
+      });
+      alert(error ? "Could not send link: " + error.message
+        : "Check your email — the login link signs you in here.");
+    };
+  }
+}
+
+async function initAuth() {
+  if (!CONFIGURED) return;
+  session = (await db.auth.getSession()).data.session;
+  renderAuthArea();
+  db.auth.onAuthStateChange((_ev, s) => {
+    const was = !!session; session = s; renderAuthArea();
+    if (!!s !== was) route(); // re-render lists on sign-in/out
+  });
+}
+
 /* ── Router ───────────────────────────────────────────────────────── */
 function route() {
   if (!CONFIGURED) {
@@ -286,13 +458,15 @@ function route() {
     $("#form-create") && ($("#form-create").querySelector("button").disabled = true);
     return;
   }
+  const pair = location.hash.match(/^#\/g\/([0-9a-f-]{36})\/m\/([0-9a-f-]{36})$/i);
+  if (pair) return renderMember(pair[1], pair[2]);
   const m = location.hash.match(/^#\/g\/([0-9a-f-]{36})$/i);
   if (m) renderGroup(m[1]);
   else renderHome();
 }
 
 window.addEventListener("hashchange", route);
-route();
+initAuth().finally(route);
 
 /* ── PWA: offline shell + install button ─────────────────────────── */
 if ("serviceWorker" in navigator) {

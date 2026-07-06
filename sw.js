@@ -2,7 +2,7 @@
    Shell files: cache-first with background refresh (stale-while-revalidate).
    Data (Supabase RPCs) is POST — never intercepted, always live. */
 
-const CACHE = "hisaab-v0.2";
+const CACHE = "hisaab-v3.0";
 const SHELL = [
   "./",
   "index.html",
