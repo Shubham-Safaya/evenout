@@ -1,0 +1,295 @@
+/* Hisaab — Splitwise-style group expense splitting.
+   Vanilla JS SPA. All data via Supabase RPCs (see schema.sql).
+   Routing: #/g/<group-uuid> is the shareable capability link. */
+
+"use strict";
+
+const CFG = window.HISAAB_CONFIG || {};
+const CONFIGURED = CFG.SUPABASE_URL && !CFG.SUPABASE_URL.startsWith("PASTE_");
+const db = CONFIGURED
+  ? window.supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_ANON_KEY)
+  : null;
+
+const $ = (sel, el = document) => el.querySelector(sel);
+const app = $("#app");
+
+const SYM = { USD: "$", INR: "₹", EUR: "€", GBP: "£" };
+const fmt = (n, cur) =>
+  `${SYM[cur] || cur + " "}${Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+async function rpc(fn, args) {
+  const { data, error } = await db.rpc(fn, args);
+  if (error) throw new Error(error.message);
+  return data;
+}
+
+/* ── Local list of groups you've touched (device-only convenience) ── */
+function rememberGroup(id, name) {
+  const seen = JSON.parse(localStorage.getItem("hisaab_groups") || "[]")
+    .filter(g => g.id !== id);
+  seen.unshift({ id, name });
+  localStorage.setItem("hisaab_groups", JSON.stringify(seen.slice(0, 12)));
+}
+
+/* ── Balance math ─────────────────────────────────────────────────── */
+function computeBalances(data) {
+  // balance > 0 → the group owes this member; < 0 → member owes the group
+  const bal = Object.fromEntries(data.members.map(m => [m.id, 0]));
+  for (const e of data.expenses) {
+    bal[e.paid_by] += Number(e.amount);
+    for (const s of e.splits || []) bal[s.member_id] -= Number(s.share);
+  }
+  for (const k in bal) bal[k] = Math.round(bal[k] * 100) / 100;
+  return bal;
+}
+
+function simplifyDebts(balances) {
+  // Greedy min-transaction settle-up: repeatedly match top debtor & creditor.
+  const debtors = [], creditors = [];
+  for (const [id, b] of Object.entries(balances)) {
+    if (b < -0.005) debtors.push({ id, amt: -b });
+    else if (b > 0.005) creditors.push({ id, amt: b });
+  }
+  debtors.sort((a, b) => b.amt - a.amt);
+  creditors.sort((a, b) => b.amt - a.amt);
+  const plan = [];
+  let i = 0, j = 0;
+  while (i < debtors.length && j < creditors.length) {
+    const pay = Math.min(debtors[i].amt, creditors[j].amt);
+    plan.push({ from: debtors[i].id, to: creditors[j].id, amount: Math.round(pay * 100) / 100 });
+    debtors[i].amt -= pay; creditors[j].amt -= pay;
+    if (debtors[i].amt < 0.005) i++;
+    if (creditors[j].amt < 0.005) j++;
+  }
+  return plan;
+}
+
+/* ── Views ────────────────────────────────────────────────────────── */
+function renderHome() {
+  app.innerHTML = "";
+  app.appendChild($("#tpl-home").content.cloneNode(true));
+
+  const seen = JSON.parse(localStorage.getItem("hisaab_groups") || "[]");
+  const recent = $("#recent-groups");
+  if (seen.length) {
+    recent.innerHTML = "<h2>Your groups on this device</h2>" + seen.map(g =>
+      `<a class="group-link" href="#/g/${esc(g.id)}">${esc(g.name)}</a>`).join("");
+  } else {
+    recent.remove();
+  }
+
+  $("#form-create").addEventListener("submit", async ev => {
+    ev.preventDefault();
+    const f = ev.target;
+    const members = f.members.value.split(",").map(s => s.trim()).filter(Boolean);
+    if (members.length < 1) return alert("Add at least one person.");
+    setBusy(f, true);
+    try {
+      const gid = await rpc("create_group", {
+        p_name: f.name.value.trim(), p_currency: f.currency.value, p_members: members,
+      });
+      rememberGroup(gid, f.name.value.trim());
+      location.hash = `#/g/${gid}`;
+    } catch (e) { alert("Could not create group: " + e.message); }
+    setBusy(f, false);
+  });
+}
+
+async function renderGroup(gid) {
+  app.innerHTML = `<p class="loading">Loading group…</p>`;
+  let data;
+  try {
+    data = await rpc("get_group_data", { p_group: gid });
+  } catch (e) {
+    app.innerHTML = `<section class="panel"><h2>Couldn't load this group</h2>
+      <p>${esc(e.message)}</p><p><a href="./">← back home</a></p></section>`;
+    return;
+  }
+  if (!data || !data.group) {
+    app.innerHTML = `<section class="panel"><h2>Group not found</h2>
+      <p>Check the link — it must be exactly the one that was shared.</p>
+      <p><a href="./">← back home</a></p></section>`;
+    return;
+  }
+
+  const g = data.group;
+  rememberGroup(g.id, g.name);
+  const nameOf = Object.fromEntries(data.members.map(m => [m.id, m.name]));
+  const balances = computeBalances(data);
+  const plan = simplifyDebts(balances);
+
+  const balRows = data.members.map(m => {
+    const b = balances[m.id];
+    const cls = b > 0.005 ? "pos" : b < -0.005 ? "neg" : "";
+    const label = b > 0.005 ? "gets back" : b < -0.005 ? "owes" : "settled up";
+    return `<div class="bal-row"><span>${esc(m.name)}</span>
+      <span class="${cls}">${label}${cls ? " " + fmt(Math.abs(b), g.currency) : ""}</span></div>`;
+  }).join("");
+
+  const planRows = plan.length
+    ? plan.map(p => `<div class="plan-row">${esc(nameOf[p.from])} → ${esc(nameOf[p.to])}
+        <strong>${fmt(p.amount, g.currency)}</strong>
+        <button class="btn small settle-btn" data-from="${p.from}" data-to="${p.to}"
+          data-amt="${p.amount}">mark paid</button></div>`).join("")
+    : `<p class="hint">Everyone is settled up. 🎉</p>`;
+
+  const expRows = data.expenses.length ? data.expenses.map(e => `
+    <div class="exp-row ${e.is_settlement ? "settlement" : ""}">
+      <div>
+        <strong>${esc(e.description)}</strong>
+        <div class="exp-meta">${esc(nameOf[e.paid_by] || "?")} paid ${fmt(e.amount, g.currency)}
+          · ${new Date(e.created_at).toLocaleDateString()}</div>
+      </div>
+      <button class="del-btn" data-id="${e.id}" title="delete">×</button>
+    </div>`).join("")
+    : `<p class="hint">No expenses yet — add the first one.</p>`;
+
+  const memberOpts = data.members.map(m => `<option value="${m.id}">${esc(m.name)}</option>`).join("");
+  const splitInputs = data.members.map(m => `
+    <label class="split-line"><span>${esc(m.name)}</span>
+      <input type="checkbox" class="split-in" data-id="${m.id}" checked>
+      <input type="number" step="0.01" min="0" class="split-amt hidden" data-id="${m.id}" placeholder="0.00">
+    </label>`).join("");
+
+  app.innerHTML = `
+    <section class="group-head">
+      <h1>${esc(g.name)}</h1>
+      <button class="btn small" id="copy-link">copy invite link</button>
+    </section>
+
+    <section class="panel">
+      <h2>Add expense</h2>
+      <form id="form-expense">
+        <label>Description <input name="description" required maxlength="200" placeholder="Dinner, cab, groceries…"></label>
+        <div class="row2">
+          <label>Amount <input name="amount" type="number" step="0.01" min="0.01" required></label>
+          <label>Paid by <select name="paid_by">${memberOpts}</select></label>
+        </div>
+        <fieldset>
+          <legend>Split <select id="split-mode"><option value="equal">equally</option><option value="exact">by exact amounts</option></select></legend>
+          <div id="split-list">${splitInputs}</div>
+        </fieldset>
+        <button type="submit" class="btn">Add expense</button>
+      </form>
+    </section>
+
+    <section class="panel">
+      <h2>Balances</h2>
+      ${balRows}
+      <h3>Settle up (${plan.length} payment${plan.length === 1 ? "" : "s"})</h3>
+      ${planRows}
+    </section>
+
+    <section class="panel">
+      <h2>History</h2>
+      ${expRows}
+      <details class="add-member"><summary>Add a person</summary>
+        <form id="form-member"><input name="name" required maxlength="60" placeholder="Name">
+        <button class="btn small">Add</button></form>
+      </details>
+    </section>`;
+
+  /* interactions */
+  $("#copy-link").onclick = async () => {
+    await navigator.clipboard.writeText(location.href);
+    $("#copy-link").textContent = "copied!";
+    setTimeout(() => ($("#copy-link").textContent = "copy invite link"), 1500);
+  };
+
+  $("#split-mode").onchange = ev => {
+    const exact = ev.target.value === "exact";
+    app.querySelectorAll(".split-amt").forEach(i => i.classList.toggle("hidden", !exact));
+    app.querySelectorAll(".split-in").forEach(i => i.classList.toggle("hidden", exact));
+  };
+
+  $("#form-expense").addEventListener("submit", async ev => {
+    ev.preventDefault();
+    const f = ev.target;
+    const amount = Math.round(parseFloat(f.amount.value) * 100) / 100;
+    const exact = $("#split-mode").value === "exact";
+    let splits = [];
+    if (exact) {
+      app.querySelectorAll(".split-amt").forEach(i => {
+        const v = Math.round((parseFloat(i.value) || 0) * 100) / 100;
+        if (v > 0) splits.push({ member_id: i.dataset.id, share: v });
+      });
+      const total = splits.reduce((s, x) => s + x.share, 0);
+      if (Math.abs(total - amount) > 0.02)
+        return alert(`Split amounts (${total.toFixed(2)}) must add up to ${amount.toFixed(2)}.`);
+    } else {
+      const chosen = [...app.querySelectorAll(".split-in:checked")].map(i => i.dataset.id);
+      if (!chosen.length) return alert("Pick at least one person to split with.");
+      // distribute cents so shares sum exactly to the amount
+      const cents = Math.round(amount * 100);
+      const base = Math.floor(cents / chosen.length);
+      splits = chosen.map((id, idx) => ({
+        member_id: id,
+        share: (base + (idx < cents - base * chosen.length ? 1 : 0)) / 100,
+      }));
+    }
+    setBusy(f, true);
+    try {
+      await rpc("add_expense", {
+        p_group: gid, p_description: f.description.value.trim(),
+        p_amount: amount, p_paid_by: f.paid_by.value,
+        p_splits: splits, p_is_settlement: false,
+      });
+      renderGroup(gid);
+    } catch (e) { alert("Could not add expense: " + e.message); setBusy(f, false); }
+  });
+
+  app.querySelectorAll(".settle-btn").forEach(btn => btn.onclick = async () => {
+    const { from, to, amt } = btn.dataset;
+    if (!confirm(`${nameOf[from]} paid ${nameOf[to]} ${fmt(amt, g.currency)}?`)) return;
+    try {
+      await rpc("add_expense", {
+        p_group: gid,
+        p_description: `Settlement: ${nameOf[from]} → ${nameOf[to]}`,
+        p_amount: Number(amt), p_paid_by: from,
+        p_splits: [{ member_id: to, share: Number(amt) }],
+        p_is_settlement: true,
+      });
+      renderGroup(gid);
+    } catch (e) { alert("Could not record settlement: " + e.message); }
+  });
+
+  app.querySelectorAll(".del-btn").forEach(btn => btn.onclick = async () => {
+    if (!confirm("Delete this entry for everyone?")) return;
+    try {
+      await rpc("delete_expense", { p_group: gid, p_expense: btn.dataset.id });
+      renderGroup(gid);
+    } catch (e) { alert("Could not delete: " + e.message); }
+  });
+
+  $("#form-member").addEventListener("submit", async ev => {
+    ev.preventDefault();
+    try {
+      await rpc("add_member", { p_group: gid, p_name: ev.target.name.value.trim() });
+      renderGroup(gid);
+    } catch (e) { alert("Could not add person: " + e.message); }
+  });
+}
+
+function setBusy(form, busy) {
+  form.querySelectorAll("button, input, select").forEach(el => (el.disabled = busy));
+}
+
+/* ── Router ───────────────────────────────────────────────────────── */
+function route() {
+  if (!CONFIGURED) {
+    $("#setup-banner").classList.remove("hidden");
+    renderHome();
+    $("#form-create") && ($("#form-create").querySelector("button").disabled = true);
+    return;
+  }
+  const m = location.hash.match(/^#\/g\/([0-9a-f-]{36})$/i);
+  if (m) renderGroup(m[1]);
+  else renderHome();
+}
+
+window.addEventListener("hashchange", route);
+route();
