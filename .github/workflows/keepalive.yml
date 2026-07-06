@@ -1,0 +1,23 @@
+name: Supabase keepalive
+
+# Supabase free-tier projects pause after ~1 week of inactivity.
+# This pings the database twice a week so Hisaab never goes to sleep.
+# The anon key is the public client key (also in config.js) — safe here.
+
+on:
+  schedule:
+    - cron: "17 6 * * 1,4" # Mon+Thu 06:17 UTC
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping get_group_data RPC
+        run: |
+          KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFyZWtlZGJsZHRlZHBydG91dm1lIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODMzNTQ5MzcsImV4cCI6MjA5ODkzMDkzN30.CLHoZxp3Gp-_I-hkVRL0LIpJnfo_IFXNPJXE1awflDg"
+          RESP=$(curl -sf "https://arekedbldtedprtouvme.supabase.co/rest/v1/rpc/get_group_data" \
+            -H "apikey: $KEY" -H "Authorization: Bearer $KEY" \
+            -H "Content-Type: application/json" \
+            -d '{"p_group":"ebb8da90-3d78-45f6-9260-f0f49905f217"}')
+          echo "$RESP" | grep -q '"group"' && echo "Database awake." || { echo "Unexpected response: $RESP"; exit 1; }
