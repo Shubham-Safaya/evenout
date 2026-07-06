@@ -3,9 +3,9 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Hisaab — split expenses with friends</title>
-  <meta name="description" content="Hisaab: split group expenses with friends. Free, no ads, no accounts. Share one link with your group and settle up.">
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='20' fill='%23134e4a'/%3E%3Ctext x='50' y='68' font-size='52' text-anchor='middle' fill='%23fbbf24' font-family='Georgia'%3E%E2%82%B9%3C/text%3E%3C/svg%3E">
+  <title>EvenOut — split expenses with friends</title>
+  <meta name="description" content="EvenOut: split group expenses with friends. Free, no ads, no tracking. Share one link with your group and settle up.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='20' fill='%23134e4a'/%3E%3Cg stroke='%23fbbf24' stroke-width='9' stroke-linecap='round'%3E%3Cline x1='27' y1='39' x2='73' y2='39'/%3E%3Cline x1='27' y1='62' x2='73' y2='62'/%3E%3C/g%3E%3C/svg%3E">
   <link rel="manifest" href="manifest.webmanifest">
   <meta name="theme-color" content="#134e4a">
   <link rel="apple-touch-icon" href="icon-192.png">
@@ -13,14 +13,14 @@
 </head>
 <body>
   <header class="top">
-    <a class="brand" href="./">Hisaab</a>
+    <a class="brand" href="./">EvenOut</a>
     <span class="tag">split expenses with friends — free, no ads</span>
     <button id="install-btn" class="btn small hidden">Install app</button>
     <span id="auth-area" class="auth-area"></span>
   </header>
 
   <div id="setup-banner" class="banner hidden">
-    Hisaab isn't connected to its database yet. The site owner needs to fill
+    EvenOut isn't connected to its database yet. The site owner needs to fill
     <code>config.js</code> with Supabase keys (see README).
   </div>
 
@@ -30,7 +30,7 @@
 
   <template id="tpl-home">
     <section class="hero">
-      <h1>Keep the hisaab. Skip the awkwardness.</h1>
+      <h1>Keep it even. Skip the awkwardness.</h1>
       <p>Create a group, share one link on WhatsApp, and everyone can add
       expenses and see who owes whom. No accounts, no ads, no paywall.</p>
     </section>
@@ -62,15 +62,14 @@
       <h2>Your data stays yours</h2>
       <p>No ads, no trackers, no analytics, no selling data — ever. Expenses
       live in a locked-down database that even our own public API key cannot
-      browse; only people with your group's link can see your group. Sign-in
-      is optional and only remembers which groups are yours. The whole thing
-      is <a href="https://github.com/Shubham-Safaya/hisaab">open source</a>,
+      browse; only people with your group's link can see your group. Sign-in is optional and only remembers which groups are yours. We count anonymous daily usage (a random device token, nothing about you) and publish it on the <a href="stats.html">live stats page</a>; we honor Do Not Track. The whole thing
+      is <a href="https://github.com/Shubham-Safaya/evenout">open source</a>,
       so you can check.</p>
     </section>
   </template>
 
   <footer class="foot">
-    <span>Free forever. No ads. <a href="https://github.com/Shubham-Safaya/hisaab">Open source</a>.</span>
+    <span>Free forever. No ads. <a href="https://github.com/Shubham-Safaya/evenout">Open source</a> · <a href="stats.html">live stats</a>.</span>
     <span>Built by <a href="https://shubham-safaya.github.io">Shubham Safaya</a></span>
   </footer>
 

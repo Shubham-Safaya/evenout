@@ -1,8 +1,8 @@
-/* Hisaab service worker — offline app shell.
+/* EvenOut service worker — offline app shell.
    Shell files: cache-first with background refresh (stale-while-revalidate).
    Data (Supabase RPCs) is POST — never intercepted, always live. */
 
-const CACHE = "hisaab-v3.0";
+const CACHE = "evenout-v3.1";
 const SHELL = [
   "./",
   "index.html",
@@ -10,6 +10,7 @@ const SHELL = [
   "app.js",
   "config.js",
   "manifest.webmanifest",
+  "stats.html",
   "icon-192.png",
   "icon-512.png",
   "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js",

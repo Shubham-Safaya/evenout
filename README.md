@@ -1,10 +1,10 @@
-# Hisaab
+# EvenOut
 
 Split group expenses with friends. Free, no ads, no accounts. A group is a
 private link — share it on WhatsApp and everyone can add expenses, see
 balances, and settle up with the fewest payments.
 
-**Live:** https://shubham-safaya.github.io/hisaab/
+**Live:** https://shubham-safaya.github.io/evenout/
 
 ## How it works
 - Frontend: static vanilla-JS SPA on GitHub Pages (this repo).
@@ -14,10 +14,16 @@ balances, and settle up with the fewest payments.
   unguessable UUID in the link *is* the membership. Treat group links like
   group-chat invites.
 
+## Live metrics
+Public dashboard at `stats.html` (DAU, MAU, installs, groups, expenses,
+30-day sparkline). Privacy-first: anonymous random device tokens only,
+aggregates published openly, Do Not Track honored. Run
+`migrations/003_metrics.sql` to enable.
+
 ## Upgrading to v3.0 (existing project)
 1. SQL Editor → paste `migrations/002_v3.sql` → Run (expense dates + accounts).
 2. Authentication → URL Configuration → set Site URL to
-   `https://shubham-safaya.github.io/hisaab/` (magic links land there).
+   `https://shubham-safaya.github.io/evenout/` (magic links land there).
 
 ## One-time setup (owner, ~3 minutes)
 1. Create a free project at https://supabase.com (any name/region).

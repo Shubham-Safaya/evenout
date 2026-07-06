@@ -1,7 +1,7 @@
 {
-  "name": "Hisaab — split expenses with friends",
-  "short_name": "Hisaab",
-  "description": "Split group expenses with friends. Free, no ads, no accounts.",
+  "name": "EvenOut — split expenses with friends",
+  "short_name": "EvenOut",
+  "description": "Split group expenses with friends. Free, no ads, no tracking.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

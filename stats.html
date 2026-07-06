@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>EvenOut — live stats</title>
+  <meta name="description" content="Live, public usage metrics for EvenOut. Aggregates only — that's all we collect.">
+  <link rel="icon" href="icon-192.png">
+  <link rel="stylesheet" href="styles.css">
+  <style>
+    .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 0.9rem; margin-bottom: 1.1rem; }
+    .stat { background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 1rem 1.1rem; }
+    .stat .num { font-family: var(--font); font-size: 2rem; color: var(--teal); }
+    .stat .lbl { font-size: 0.75rem; letter-spacing: 0.08em; text-transform: uppercase; color: #6b8a85; }
+    .spark { width: 100%; height: 90px; }
+    .spark polyline { fill: none; stroke: var(--marigold); stroke-width: 2.5; }
+    .spark .area { fill: #d9770622; stroke: none; }
+  </style>
+</head>
+<body>
+  <header class="top">
+    <a class="brand" href="./">EvenOut</a>
+    <span class="tag">live stats — updated on every page load</span>
+  </header>
+  <main>
+    <section class="hero"><h1>Usage, in the open</h1>
+      <p>Everything EvenOut knows about its own usage fits on this page:
+      anonymous daily counts. No names, no emails, no IPs, no third parties.</p></section>
+    <div class="stats-grid" id="grid"><p class="loading">Loading…</p></div>
+    <section class="panel">
+      <h2>Daily active devices — last 30 days</h2>
+      <svg class="spark" id="spark" viewBox="0 0 300 90" preserveAspectRatio="none"></svg>
+      <p class="hint" id="spark-hint"></p>
+    </section>
+  </main>
+  <footer class="foot">
+    <span><a href="./">← back to EvenOut</a></span>
+    <span><a href="https://github.com/Shubham-Safaya/evenout">Source</a></span>
+  </footer>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+  <script src="config.js"></script>
+  <script>
+    (async () => {
+      const cfg = window.EVENOUT_CONFIG || window.HISAAB_CONFIG;
+      const db = window.supabase.createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY);
+      const { data: s, error } = await db.rpc("get_public_stats");
+      const grid = document.getElementById("grid");
+      if (error || !s) { grid.innerHTML = "<p>Stats not available yet (run migration 003).</p>"; return; }
+      const card = (n, l) => `<div class="stat"><div class="num">${n}</div><div class="lbl">${l}</div></div>`;
+      grid.innerHTML =
+        card(s.dau, "active today (DAU)") +
+        card(s.mau, "active 30 days (MAU)") +
+        card(s.installs, "app installs") +
+        card(s.total_groups, "groups") +
+        card(s.total_expenses, "expenses tracked") +
+        card(s.total_settlements, "settle-ups");
+      const days = s.daily || [];
+      const max = Math.max(1, ...days.map(d => d.actives));
+      const pts = days.map((d, i) => `${(i / Math.max(1, days.length - 1)) * 300},${88 - (d.actives / max) * 80}`);
+      document.getElementById("spark").innerHTML =
+        `<polygon class="area" points="0,90 ${pts.join(" ")} 300,90"></polygon>` +
+        `<polyline points="${pts.join(" ")}"></polyline>`;
+      document.getElementById("spark-hint").textContent =
+        `Peak: ${max} device${max === 1 ? "" : "s"}/day · total ${days.reduce((a, d) => a + d.actives, 0)} device-days in 30 days`;
+    })();
+  </script>
+</body>
+</html>

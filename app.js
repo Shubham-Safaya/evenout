@@ -1,10 +1,10 @@
-/* Hisaab — Splitwise-style group expense splitting.
+/* EvenOut — Splitwise-style group expense splitting.
    Vanilla JS SPA. All data via Supabase RPCs (see schema.sql).
    Routing: #/g/<group-uuid> is the shareable capability link. */
 
 "use strict";
 
-const CFG = window.HISAAB_CONFIG || {};
+const CFG = window.EVENOUT_CONFIG || window.HISAAB_CONFIG || {};
 const CONFIGURED = CFG.SUPABASE_URL && !CFG.SUPABASE_URL.startsWith("PASTE_");
 const db = CONFIGURED
   ? window.supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_ANON_KEY)
@@ -51,10 +51,10 @@ async function rpc(fn, args) {
 
 /* ── Local list of groups you've touched (device-only convenience) ── */
 function rememberGroup(id, name) {
-  const seen = JSON.parse(localStorage.getItem("hisaab_groups") || "[]")
+  const seen = JSON.parse(localStorage.getItem("evenout_groups") || localStorage.getItem("hisaab_groups") || "[]")
     .filter(g => g.id !== id);
   seen.unshift({ id, name });
-  localStorage.setItem("hisaab_groups", JSON.stringify(seen.slice(0, 12)));
+  localStorage.setItem("evenout_groups", JSON.stringify(seen.slice(0, 12)));
 }
 
 /* ── Balance math ─────────────────────────────────────────────────── */
@@ -95,7 +95,7 @@ function renderHome() {
   app.innerHTML = "";
   app.appendChild($("#tpl-home").content.cloneNode(true));
 
-  const seen = JSON.parse(localStorage.getItem("hisaab_groups") || "[]");
+  const seen = JSON.parse(localStorage.getItem("evenout_groups") || localStorage.getItem("hisaab_groups") || "[]");
   const recent = $("#recent-groups");
   if (seen.length) {
     recent.innerHTML = "<h2>Your groups on this device</h2>" + seen.map(g =>
@@ -465,8 +465,30 @@ function route() {
   else renderHome();
 }
 
+/* ── Anonymous usage ping (feeds the public stats page) ────────────
+   Stores only (day, random-device-token). No PII, no third parties,
+   honors Do Not Track. Aggregates are public at stats.html. */
+function deviceToken() {
+  let t = localStorage.getItem("evenout_device");
+  if (!t) {
+    t = (crypto.randomUUID && crypto.randomUUID()) ||
+      String(Date.now()) + "-" + Math.random().toString(36).slice(2, 12);
+    localStorage.setItem("evenout_device", t);
+  }
+  return t;
+}
+
+function logPing(kind) {
+  if (!CONFIGURED) return;
+  if (navigator.doNotTrack === "1") return; // respected, as promised
+  if (kind === "open" && sessionStorage.getItem("evenout_pinged")) return;
+  if (kind === "open") sessionStorage.setItem("evenout_pinged", "1");
+  db.rpc("log_ping", { p_device: deviceToken(), p_kind: kind }).then(() => {});
+}
+
 window.addEventListener("hashchange", route);
 initAuth().finally(route);
+logPing("open");
 
 /* ── PWA: offline shell + install button ─────────────────────────── */
 if ("serviceWorker" in navigator) {
@@ -487,4 +509,7 @@ installBtn.addEventListener("click", async () => {
   installPrompt = null;
   installBtn.classList.add("hidden");
 });
-window.addEventListener("appinstalled", () => installBtn.classList.add("hidden"));
+window.addEventListener("appinstalled", () => {
+  installBtn.classList.add("hidden");
+  logPing("install");
+});

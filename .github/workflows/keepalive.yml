@@ -1,7 +1,7 @@
 name: Supabase keepalive
 
 # Supabase free-tier projects pause after ~1 week of inactivity.
-# This pings the database twice a week so Hisaab never goes to sleep.
+# This pings the database twice a week so EvenOut never goes to sleep.
 # The anon key is the public client key (also in config.js) — safe here.
 
 on:
