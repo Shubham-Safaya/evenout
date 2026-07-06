@@ -90,6 +90,37 @@ function simplifyDebts(balances) {
   return plan;
 }
 
+function computePairwise(data) {
+  // Non-simplified ledger: who owes whom from the actual expenses.
+  // Settlements naturally offset (payer covered the creditor's share).
+  const owed = {}; // "debtor|creditor" -> amount
+  for (const e of data.expenses) {
+    for (const s of e.splits || []) {
+      if (s.member_id === e.paid_by) continue;
+      const k = `${s.member_id}|${e.paid_by}`;
+      owed[k] = (owed[k] || 0) + Number(s.share);
+    }
+  }
+  const plan = [], seen = new Set();
+  for (const k of Object.keys(owed)) {
+    if (seen.has(k)) continue;
+    const [a, b] = k.split("|");
+    const rk = `${b}|${a}`;
+    seen.add(k); seen.add(rk);
+    const net = Math.round(((owed[k] || 0) - (owed[rk] || 0)) * 100) / 100;
+    if (net > 0.005) plan.push({ from: a, to: b, amount: net });
+    else if (net < -0.005) plan.push({ from: b, to: a, amount: -net });
+  }
+  return plan.sort((x, y) => y.amount - x.amount);
+}
+
+function avatar(name, size) {
+  let h = 0;
+  for (const c of String(name)) h = (h * 31 + c.charCodeAt(0)) % 360;
+  const initials = String(name).trim().split(/\s+/).map(w => w[0]).slice(0, 2).join("").toUpperCase();
+  return `<span class="avatar ${size || ""}" style="background:hsl(${h},48%,38%)">${esc(initials)}</span>`;
+}
+
 /* ── Views ────────────────────────────────────────────────────────── */
 function renderHome() {
   app.innerHTML = "";
@@ -163,30 +194,44 @@ async function renderGroup(gid) {
   }
   const nameOf = Object.fromEntries(data.members.map(m => [m.id, m.name]));
   const balances = computeBalances(data);
-  const plan = simplifyDebts(balances);
+  const simplified = localStorage.getItem("evenout_simplify_" + g.id) !== "0";
+  const plan = simplified ? simplifyDebts(balances) : computePairwise(data);
 
+  const maxBal = Math.max(0.01, ...Object.values(balances).map(Math.abs));
   const balRows = data.members.map(m => {
     const b = balances[m.id];
     const cls = b > 0.005 ? "pos" : b < -0.005 ? "neg" : "";
     const label = b > 0.005 ? "gets back" : b < -0.005 ? "owes" : "settled up";
-    return `<div class="bal-row"><a class="member-link" href="#/g/${g.id}/m/${m.id}">${esc(m.name)}</a>
-      <span class="${cls}">${label}${cls ? " " + fmt(Math.abs(b), g.currency) : ""}</span></div>`;
+    const w = Math.round((Math.abs(b) / maxBal) * 100);
+    return `<a class="bal-row" href="#/g/${g.id}/m/${m.id}">
+      ${avatar(m.name)}
+      <span class="bal-main"><span class="bal-name">${esc(m.name)}</span>
+        <span class="bal-bar"><span class="bal-fill ${cls}" style="width:${cls ? w : 0}%"></span></span></span>
+      <span class="bal-amt ${cls}">${label}${cls ? "<br><strong>" + fmt(Math.abs(b), g.currency) + "</strong>" : ""}</span>
+    </a>`;
   }).join("");
 
   const planRows = plan.length
-    ? plan.map(p => `<div class="plan-row">${esc(nameOf[p.from])} → ${esc(nameOf[p.to])}
+    ? plan.map(p => `<div class="plan-row">
+        <span class="plan-who">${avatar(nameOf[p.from])} ${esc(nameOf[p.from])}
+          <span class="arrow">→</span> ${avatar(nameOf[p.to])} ${esc(nameOf[p.to])}</span>
         <strong>${fmt(p.amount, g.currency)}</strong>
         <button class="btn small settle-btn" data-from="${p.from}" data-to="${p.to}"
           data-amt="${p.amount}">mark paid</button></div>`).join("")
     : `<p class="hint">Everyone is settled up. 🎉</p>`;
 
+  const spendTotal = data.expenses.filter(e => !e.is_settlement)
+    .reduce((s, e) => s + Number(e.amount), 0);
+  const expCount = data.expenses.filter(e => !e.is_settlement).length;
+
   const expRows = data.expenses.length ? data.expenses.map(e => `
     <div class="exp-row ${e.is_settlement ? "settlement" : ""}">
-      <div>
+      ${avatar(nameOf[e.paid_by] || "?")}
+      <div class="exp-main">
         <strong>${esc(e.description)}</strong>
-        <div class="exp-meta">${esc(nameOf[e.paid_by] || "?")} paid ${fmt(e.amount, g.currency)}
-          · ${expDate(e)}</div>
+        <div class="exp-meta">${esc(nameOf[e.paid_by] || "?")} paid · ${expDate(e)}</div>
       </div>
+      <span class="exp-amt">${fmt(e.amount, g.currency)}</span>
       <span class="row-btns">${e.is_settlement ? "" :
         `<button class="edit-btn" data-id="${e.id}" title="edit">✎</button>`}
       <button class="del-btn" data-id="${e.id}" title="delete">×</button></span>
@@ -224,10 +269,22 @@ async function renderGroup(gid) {
       </form>
     </section>
 
+    <section class="summary-strip">
+      <div class="sum-cell"><span class="sum-num">${fmt(spendTotal, g.currency)}</span><span class="sum-lbl">total spent</span></div>
+      <div class="sum-cell"><span class="sum-num">${expCount}</span><span class="sum-lbl">expenses</span></div>
+      <div class="sum-cell"><span class="sum-num">${fmt(data.members.length ? spendTotal / data.members.length : 0, g.currency)}</span><span class="sum-lbl">per person</span></div>
+    </section>
+
     <section class="panel">
       <h2>Balances</h2>
       ${balRows}
-      <h3>Settle up (${plan.length} payment${plan.length === 1 ? "" : "s"})</h3>
+      <div class="settle-head">
+        <h3>${simplified ? `Settle up — fewest payments (${plan.length})` : `Who owes whom (${plan.length})`}</h3>
+        <label class="switch" title="On: fewest possible payments. Off: actual pairwise debts.">
+          <input type="checkbox" id="simplify-toggle" ${simplified ? "checked" : ""}>
+          <span class="slider"></span><span class="switch-lbl">simplify debts</span>
+        </label>
+      </div>
       ${planRows}
     </section>
 
@@ -241,6 +298,11 @@ async function renderGroup(gid) {
     </section>`;
 
   /* interactions */
+  $("#simplify-toggle").onchange = ev => {
+    localStorage.setItem("evenout_simplify_" + g.id, ev.target.checked ? "1" : "0");
+    renderGroup(gid);
+  };
+
   $("#copy-link").onclick = async () => {
     await navigator.clipboard.writeText(location.href);
     $("#copy-link").textContent = "copied!";
