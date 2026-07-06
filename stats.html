@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>EvenOut — live stats</title>
-  <meta name="description" content="Live, public usage metrics for EvenOut. Aggregates only — that's all we collect.">
+  <title>EvenOut — owner stats</title>
+  <meta name="robots" content="noindex">
   <link rel="icon" href="icon-192.png">
   <link rel="stylesheet" href="styles.css">
   <style>
@@ -20,18 +20,10 @@
 <body>
   <header class="top">
     <a class="brand" href="./">EvenOut</a>
-    <span class="tag">live stats — updated on every page load</span>
+    <span class="tag">owner dashboard</span>
   </header>
-  <main>
-    <section class="hero"><h1>Usage, in the open</h1>
-      <p>Everything EvenOut knows about its own usage fits on this page:
-      anonymous daily counts. No names, no emails, no IPs, no third parties.</p></section>
-    <div class="stats-grid" id="grid"><p class="loading">Loading…</p></div>
-    <section class="panel">
-      <h2>Daily active devices — last 30 days</h2>
-      <svg class="spark" id="spark" viewBox="0 0 300 90" preserveAspectRatio="none"></svg>
-      <p class="hint" id="spark-hint"></p>
-    </section>
+  <main id="main">
+    <section class="panel"><p class="loading">Checking access…</p></section>
   </main>
   <footer class="foot">
     <span><a href="./">← back to EvenOut</a></span>
@@ -43,25 +35,61 @@
     (async () => {
       const cfg = window.EVENOUT_CONFIG || window.HISAAB_CONFIG;
       const db = window.supabase.createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY);
-      const { data: s, error } = await db.rpc("get_public_stats");
-      const grid = document.getElementById("grid");
-      if (error || !s) { grid.innerHTML = "<p>Stats not available yet (run migration 003).</p>"; return; }
+      const main = document.getElementById("main");
+
+      const signInView = () => {
+        main.innerHTML = `<section class="panel"><h2>Owner sign-in required</h2>
+          <p>These metrics are private. Sign in with the owner email to view them.</p>
+          <button class="btn" id="si">Sign in with email</button></section>`;
+        document.getElementById("si").onclick = async () => {
+          const email = prompt("Owner email:");
+          if (!email) return;
+          const { error } = await db.auth.signInWithOtp({
+            email: email.trim(),
+            options: { emailRedirectTo: location.origin + location.pathname },
+          });
+          alert(error ? error.message : "Check your email for the login link.");
+        };
+      };
+
+      const { data: { session } } = await db.auth.getSession();
+      if (!session) return signInView();
+
+      const { data: s, error } = await db.rpc("get_stats");
+      if (error) {
+        main.innerHTML = `<section class="panel"><h2>Not authorized</h2>
+          <p>${session.user.email} is not an admin (or migration 004 hasn't been run).</p>
+          <button class="linkish" id="so" style="color:var(--teal)">sign out</button></section>`;
+        document.getElementById("so").onclick = async () => { await db.auth.signOut(); location.reload(); };
+        return;
+      }
+
       const card = (n, l) => `<div class="stat"><div class="num">${n}</div><div class="lbl">${l}</div></div>`;
-      grid.innerHTML =
-        card(s.dau, "active today (DAU)") +
-        card(s.mau, "active 30 days (MAU)") +
-        card(s.installs, "app installs") +
-        card(s.total_groups, "groups") +
-        card(s.total_expenses, "expenses tracked") +
-        card(s.total_settlements, "settle-ups");
       const days = s.daily || [];
       const max = Math.max(1, ...days.map(d => d.actives));
       const pts = days.map((d, i) => `${(i / Math.max(1, days.length - 1)) * 300},${88 - (d.actives / max) * 80}`);
-      document.getElementById("spark").innerHTML =
-        `<polygon class="area" points="0,90 ${pts.join(" ")} 300,90"></polygon>` +
-        `<polyline points="${pts.join(" ")}"></polyline>`;
-      document.getElementById("spark-hint").textContent =
-        `Peak: ${max} device${max === 1 ? "" : "s"}/day · total ${days.reduce((a, d) => a + d.actives, 0)} device-days in 30 days`;
+      main.innerHTML = `
+        <section class="hero"><h1>EvenOut metrics</h1>
+          <p>Signed in as ${session.user.email}. Aggregates of anonymous device
+          tokens — this is all the data that exists.</p></section>
+        <div class="stats-grid">
+          ${card(s.dau, "active today (DAU)")}
+          ${card(s.mau, "active 30 days (MAU)")}
+          ${card(s.installs, "app installs")}
+          ${card(s.total_groups, "groups")}
+          ${card(s.total_expenses, "expenses tracked")}
+          ${card(s.total_settlements, "settle-ups")}
+        </div>
+        <section class="panel">
+          <h2>Daily active devices — last 30 days</h2>
+          <svg class="spark" viewBox="0 0 300 90" preserveAspectRatio="none">
+            <polygon class="area" points="0,90 ${pts.join(" ")} 300,90"></polygon>
+            <polyline points="${pts.join(" ")}"></polyline>
+          </svg>
+          <p class="hint">Peak: ${max}/day · ${days.reduce((a, d) => a + d.actives, 0)} device-days in 30 days
+            · <button class="linkish" id="so" style="color:var(--teal)">sign out</button></p>
+        </section>`;
+      document.getElementById("so").onclick = async () => { await db.auth.signOut(); location.reload(); };
     })();
   </script>
 </body>

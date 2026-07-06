@@ -15,10 +15,10 @@ balances, and settle up with the fewest payments.
   group-chat invites.
 
 ## Live metrics
-Public dashboard at `stats.html` (DAU, MAU, installs, groups, expenses,
-30-day sparkline). Privacy-first: anonymous random device tokens only,
-aggregates published openly, Do Not Track honored. Run
-`migrations/003_metrics.sql` to enable.
+Owner-only dashboard at `stats.html` (DAU, MAU, installs, groups, expenses,
+30-day sparkline) — gated by admin email sign-in (`admins` table). Anonymous
+random device tokens only; Do Not Track honored. One-paste setup:
+`migrations/RUN_ME.sql`.
 
 ## Upgrading to v3.0 (existing project)
 1. SQL Editor → paste `migrations/002_v3.sql` → Run (expense dates + accounts).
